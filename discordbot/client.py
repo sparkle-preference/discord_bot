@@ -18,10 +18,6 @@ class Bot(commands.Bot):
 
     def __init__(self):
 
-        # Client
-        self.async_event(self.on_ready)
-        self.async_event(self.on_error)
-
         self.stream_manager = stream.StreamManager(self, filename='channels')
         self.stream_manager.init()
 
@@ -106,6 +102,11 @@ class Bot(commands.Bot):
     async def on_error(self, event, *args, **kwargs):
         LOG.exception('An error has occurred: {event}'.format(event=str(event)))
 
+    async def on_guild_channel_delete(self, channel):
+        LOG.debug("The channel '{guild_name:channel_name}' has been deleted".format(guild_name=channel.guild.name,
+                                                                                    channel_name=channel.name))
+        self.stream_manager.clear_channel(channel)
+
     # BOT ACTIONS
 
     async def say(self, ctx, message):
@@ -171,18 +172,16 @@ class Bot(commands.Bot):
     async def stream_list(self, ctx):
         """ Shows tracked stream list """
         message = "♦ Tracked channels ♦ \n\n"
-        channels = [self.get_channel(channel_id) for channel_id in self.stream_manager.streams]
-        for channel in sorted(channels, key=lambda x: x.position):
-            stream_data = self.stream_manager.streams[channel.id]
-            if stream_data['guild_id'] == ctx.message.channel.guild.id:
+        for channel_data in sorted(self.stream_manager.streams.values(), key=lambda x: x['position']):
+            if channel_data['guild_id'] == ctx.message.channel.guild.id:
                 twitch_channels = []
-                for stream in stream_data['twitch_channels']:
+                for stream in channel_data['twitch_channels']:
                     channel = stream.username
                     if stream.everyone:
                         channel += "*"
                     twitch_channels.append(channel)
                 message += "- {channel_name}: {twitch_channels}\n\n".format(
-                    channel_name=stream_data['channel_name'],
+                    channel_name=channel_data['channel_name'],
                     twitch_channels=", ".join(sorted(twitch_channels))
                 )
         await self.say(ctx, message)
@@ -207,8 +206,3 @@ class Bot(commands.Bot):
         await self.say(ctx, "{username} is no longer tracked in '{server_name}:{channel_name}'".format(
             username=username, server_name=ctx.message.channel.guild.name, channel_name=ctx.message.channel.name
         ))
-
-    # POLL #
-
-    async def poll_streams(self):
-        await self.stream_manager.poll_streams()

@@ -9,3 +9,4 @@
 
 # excluded files
 cfg.py
+/etc

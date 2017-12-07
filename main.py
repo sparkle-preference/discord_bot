@@ -14,5 +14,5 @@ bot = client.Bot()
 
 async.LoopManager(
     bot.start,
-    bot.poll_streams
+    bot.stream_manager.poll_streams
 ).start()

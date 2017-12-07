@@ -107,6 +107,13 @@ class StreamManager(object):
         - Delete then create it if it's in a bad format
         - Load the content if there is one
         """
+
+        etc_dirpath = tools.get_file_path("etc")
+        if not os.path.isdir(etc_dirpath):
+            LOG.debug("Missing 'etc/' directory, creating one...")
+            os.makedirs(etc_dirpath)
+            LOG.debug("{etc_dirpath}' directory successfully created".format(etc_dirpath=etc_dirpath))
+
         if os.path.exists(self.filepath):
             LOG.debug("Loading {filepath} to see if an init is needed".format(filepath=self.filepath))
             self.streams = tools.load_json_file(self.filepath)
@@ -114,7 +121,7 @@ class StreamManager(object):
         if not os.path.exists(self.filepath) or self.streams is None:
             self.streams = {}
             tools.save_file(self.filepath, u"{}")
-            LOG.debug("data file is not found or corrupted, recreating a empty one...")
+            LOG.debug("data file is not found or corrupted, recreating an empty one...")
 
         for channel_id in self.streams:
             self.streams[channel_id]['twitch_channels'] = [
@@ -141,6 +148,7 @@ class StreamManager(object):
         for channel_id, channel_info in self.streams.items():
             output[channel_id] = {
                 'channel_name': channel_info['channel_name'],
+                'position': channel_info['position'],
                 'guild_id': channel_info['guild_id'],
                 'guild_name': channel_info['guild_name'],
                 'twitch_channels': [(stream.username, stream.everyone) for stream in channel_info['twitch_channels']]
@@ -159,6 +167,7 @@ class StreamManager(object):
         if not channel_id in self.streams:
             self.streams[channel_id] = {
                 'channel_name': discord_channel.name,
+                'position': discord_channel.position,
                 'guild_name': discord_channel.guild.name,
                 'guild_id': discord_channel.guild.id,
                 'twitch_channels': []
@@ -208,6 +217,20 @@ class StreamManager(object):
                 server_name=discord_channel.guild.name,
                 channel_name=discord_channel.name
             ))
+
+    def clear_channel(self, channel):
+        """ Remove every stream tracked in a given channel (called when a discord channel is deleted)
+
+        :param channel: the discord channel from which every stream must be removed
+        """
+        try:
+            del self.streams[channel.id]
+            self._save()
+            LOG.debug("Every tracked stream have been removed from the deleted channel '{guild_name:channel_name}'"
+                      .format(guild_name=channel.guild.name, channel_name=channel.name))
+        except KeyError:
+            LOG.warning("channel '{guild_name:channel_name}' not found".format(guild_name=channel.guild.name,
+                                                                               channel_name=channel.name))
 
     async def poll_streams(self):
         """ Poll streams status every X seconds
