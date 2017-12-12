@@ -3,12 +3,12 @@
 
 import sys
 
-from discordbot import async
-from discordbot import client
-from discordbot import log
+from discord_bot import async
+from discord_bot import client
+from discord_bot import log
 
 
-sys.path.append('discordbot')
+sys.path.append('discord_bot')
 
 bot = client.Bot()
 

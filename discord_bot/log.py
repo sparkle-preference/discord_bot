@@ -2,10 +2,10 @@ import logging
 import os
 from logging.handlers import RotatingFileHandler
 
-from discordbot import tools
+from discord_bot import utils
 
 LOG_PATTERN = logging.Formatter('%(asctime)s:%(levelname)s:%(name)s: [%(filename)s] %(message)s')
-LOG_DIR = tools.get_project_dir() + "/log"
+LOG_DIR = utils.get_project_dir() + "/log"
 
 if not os.path.isdir(LOG_DIR):
     os.makedirs(LOG_DIR)

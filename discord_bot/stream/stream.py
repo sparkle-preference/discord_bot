@@ -6,8 +6,10 @@ import json
 from json import decoder
 import os
 
+from discord import colour, embeds
+
 import cfg
-from discordbot import tools
+from discord_bot import utils
 
 LOG = logging.getLogger('debug')
 
@@ -36,7 +38,7 @@ class Stream(object):
         """ Get user id """
         url = "{twitch_api_url}/users?login={twitch_username}".format(twitch_api_url=cfg.TWITCH_API_URL,
                                                                       twitch_username=self.username)
-        body, status_code = await tools.request(url, headers=HEADERS)
+        body, status_code = await utils.request(url, headers=HEADERS)
         if status_code == 200:
             try:
                 user = json.loads(body)['users'][0]
@@ -60,7 +62,7 @@ class Stream(object):
             await self.get_id()
 
         url = "{twitch_api_url}/streams/{id}".format(twitch_api_url=cfg.TWITCH_API_URL, id=self.id)
-        body, status_code = await tools.request(url, headers=HEADERS)
+        body, status_code = await utils.request(url, headers=HEADERS)
         if status_code == 200:
             try:
                 stream = json.loads(body)
@@ -98,7 +100,7 @@ class StreamManager(object):
     def __init__(self, bot, filename="channels"):
         self.bot = bot
         self.streams = None
-        self.filepath = tools.get_file_path("etc/" + filename + ".json")
+        self.filepath = utils.get_file_path("etc/" + filename + ".json")
 
     def init(self):
         """ Initialize the stream file
@@ -108,7 +110,7 @@ class StreamManager(object):
         - Load the content if there is one
         """
 
-        etc_dirpath = tools.get_file_path("etc")
+        etc_dirpath = utils.get_file_path("etc")
         if not os.path.isdir(etc_dirpath):
             LOG.debug("Missing 'etc/' directory, creating one...")
             os.makedirs(etc_dirpath)
@@ -116,11 +118,11 @@ class StreamManager(object):
 
         if os.path.exists(self.filepath):
             LOG.debug("Loading {filepath} to see if an init is needed".format(filepath=self.filepath))
-            self.streams = tools.load_json_file(self.filepath)
+            self.streams = utils.load_json_file(self.filepath)
 
         if not os.path.exists(self.filepath) or self.streams is None:
             self.streams = {}
-            tools.save_file(self.filepath, u"{}")
+            utils.save_file(self.filepath, u"{}")
             LOG.debug("data file is not found or corrupted, recreating an empty one...")
 
         for channel_id in self.streams:
@@ -153,7 +155,47 @@ class StreamManager(object):
                 'guild_name': channel_info['guild_name'],
                 'twitch_channels': [(stream.username, stream.everyone) for stream in channel_info['twitch_channels']]
             }
-        tools.save_json_file(self.filepath, output)
+        utils.save_json_file(self.filepath, output)
+
+    @staticmethod
+    def _get_embed_notification(stream, stream_info):
+        """ Send a message in discord chat to notify that a stream went online
+
+        :param stream: stream object
+        :param stream_info: stream info
+        """
+        twitch_icon_url = "https://www.shareicon.net/download/2015/09/08/98061_twitch_512x512.png"
+        clock_icon_url = "http://www.iconsdb.com/icons/preview/caribbean-blue/clock-xxl.png"
+
+        display_name = stream_info.get('channel').get('display_name')
+        game = stream_info.get('game')
+        title = stream_info.get('channel').get('status')
+        logo = stream_info.get('channel').get('logo')
+        profile_banner = stream_info.get('channel').get('profile_banner')
+
+        twitch_channel = "https://twitch.tv/" + str(stream.username)
+
+        message = ""
+        if stream.everyone:
+            message += "@everyone "
+
+        message += "{display_name} is streaming!".format(display_name=display_name)
+
+        embed = embeds.Embed()
+        embed.colour = colour.Color.dark_blue()
+        embed.description = "[{}]({})".format(twitch_channel, twitch_channel)
+
+        embed.set_author(name=display_name, url=twitch_channel, icon_url=twitch_icon_url)
+        embed.add_field(name="Playing", value=game)
+        embed.add_field(name="Stream Title", value=title)
+        embed.set_footer(text="Stream live time", icon_url=clock_icon_url)
+
+        if logo:
+            embed.set_thumbnail(url=logo)
+        if profile_banner:
+            embed.set_image(url=profile_banner)
+
+        return message, embed
 
     def add_stream(self, discord_channel, twitch_username, everyone=False):
         """ Add a stream in a discord channel tracklist
@@ -243,6 +285,8 @@ class StreamManager(object):
             await asyncio.sleep(1)
         while True:
             channels_by_stream = self._get_discord_channels_by_stream()
+            if not channels_by_stream:
+                await asyncio.sleep(10)
             for stream, discord_channel_ids in channels_by_stream.items():
                 api_result = await stream.get_status()
                 if api_result is not None:
@@ -250,8 +294,15 @@ class StreamManager(object):
                     if status:
                         if not stream.is_online:
                             if not stream.is_notification_already_sent():
+                                message, embed = self._get_embed_notification(stream, status)
                                 for channel_id in discord_channel_ids:
-                                    await self.bot.notify(channel_id, stream, status)
+                                    channel = self.bot.get_channel(int(channel_id))
+                                    await channel.send(message, embed=embed)
+                                    LOG.debug(
+                                        "Sending notification for {username}'s stream in '{guild_name}:{channel_name}'"
+                                        .format(username=stream.username, guild_name=channel.guild.name,
+                                                channel_name=channel.name)
+                                    )
                                 stream.update_last_notification_date()
                                 stream.is_online = True
                             else:
@@ -265,4 +316,3 @@ class StreamManager(object):
                     LOG.debug("No status for {username}, skipping iteration".format(username=stream.username))
 
                 await asyncio.sleep(1)
-            await asyncio.sleep(10)
