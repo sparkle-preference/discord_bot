@@ -1,18 +1,18 @@
 #!/usr/bin/python
 
 
+import asyncio
 import sys
 
-from discord_bot import async
+import cfg
 from discord_bot import client
 from discord_bot import log
 
 
 sys.path.append('discord_bot')
 
-bot = client.Bot()
+bot = client.Bot(command_prefix=cfg.COMMAND_PREFIX)
 
-async.LoopManager(
-    bot.start,
-    bot.stream_manager.poll_streams
-).start()
+loop = asyncio.get_event_loop()
+asyncio.ensure_future(coro_or_future=bot.start(cfg.DISCORD_BOT_TOKEN))
+loop.run_forever()

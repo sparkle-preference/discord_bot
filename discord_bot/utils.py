@@ -8,24 +8,12 @@ import aiohttp
 DEBUG_LOG = logging.getLogger('debug')
 
 
-def init_channels_file():
-    channels_file_name = 'etc/channels.json'
-    channels_file = get_file_path(channels_file_name)
-    channels = None
-    if os.path.exists(channels_file):
-        DEBUG_LOG.debug("Loading {filename} to see if an init is needed".format(filename=channels_file_name))
-        channels = load_json_file(channels_file_name)
-    if channels is None:
-        save_file(channels_file_name, "{}")
-        DEBUG_LOG.debug("Channels data is invalid or not found, recreating a empty one...")
-
-
-def get_last_modification_date(filename):
-    return os.path.getmtime(get_file_path(filename))
-
-
 def get_project_dir():
     return os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+
+
+def get_project_name():
+    return os.path.basename(os.path.dirname(__file__))
 
 
 def get_file_path(filename):
@@ -67,18 +55,7 @@ def load_json_file(filename):
 
 
 async def request(url, headers):
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers) as resp:
-                status_code = resp.status
-                return await resp.text(), status_code
-    except Exception:
-        DEBUG_LOG.exception('Cannot request %s', url)
-        return "", 400
-
-
-def strfdelta(tdelta, fmt):
-    d = {"days": tdelta.days}
-    d['hours'], rem = divmod(tdelta.seconds, 3600)
-    d["minutes"], d["seconds"] = divmod(rem, 60)
-    return fmt.format(**d)
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url, headers=headers) as resp:
+            status_code = resp.status
+            return await resp.text(), status_code
