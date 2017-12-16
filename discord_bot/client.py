@@ -23,10 +23,11 @@ class Bot(commands.Bot):
         """ Load all the cogs """
         project_name = utils.get_project_name()
         cog_module_name = "{project_name}.cogs".format(project_name=project_name)
-        cog_name_list = [name for importer, name, ispkg in pkgutil.iter_modules(cogs.__path__)]
-        for cog_name in cog_name_list:
-            self.load_extension(cog_module_name + "." + cog_name)
-            LOG.debug("The cog '{cog_name}' has been successfully loaded".format(cog_name=cog_name))
+        cog_name_list = [(name, ispkg) for importer, name, ispkg in pkgutil.iter_modules(cogs.__path__)]
+        for cog_name, ispkg in cog_name_list:
+            if not ispkg:
+                self.load_extension(cog_module_name + "." + cog_name)
+                LOG.debug("The cog '{cog_name}' has been successfully loaded".format(cog_name=cog_name))
 
     async def say(self, ctx, message):
         message = "```" + message + "```"

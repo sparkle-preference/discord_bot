@@ -5,7 +5,7 @@ import os
 
 import aiohttp
 
-DEBUG_LOG = logging.getLogger('debug')
+LOG = logging.getLogger('debug')
 
 
 def get_project_dir():
@@ -23,23 +23,23 @@ def get_file_path(filename):
 def save_file(filepath, data):
     with open(filepath, mode='w+', encoding="utf-8") as fs:
         fs.write(data)
-        DEBUG_LOG.debug("Updating %s data: %s", filepath, str(data))
+        LOG.debug("Updating %s data: %s", filepath, str(data))
 
 
 def save_json_file(filepath, data):
     with open(filepath, mode='w+', encoding="utf-8") as fs:
         json.dump(collections.OrderedDict(data), fs, indent=2)
-        DEBUG_LOG.debug("Updating %s data: %s", filepath, str(data))
+        LOG.debug("Updating %s data: %s", filepath, str(data))
 
 
 def load_file(filepath):
     with open(filepath, mode='r', encoding="utf-8") as fs:
         try:
             data = fs.read()
-            DEBUG_LOG.debug("%s loaded: %s", filepath, data.replace("\n", ""))
+            LOG.debug("%s loaded: %s", filepath, data.replace("\n", ""))
             return data
         except FileNotFoundError:
-            DEBUG_LOG.exception("Cannot load the file: %s", filepath)
+            LOG.exception("Cannot load the file: %s", filepath)
 
 
 def load_json_file(filename):
@@ -49,13 +49,38 @@ def load_json_file(filename):
             try:
                 return json.loads(content)
             except (TypeError, ValueError):
-                DEBUG_LOG.exception("Cannot load the json file: {filename}".format(filename=filename))
+                LOG.exception("Cannot load the json file: {filename}".format(filename=filename))
     else:
-        DEBUG_LOG.error("'%s' is not a json file", filename)
+        LOG.error("'%s' is not a json file", filename)
 
 
 async def request(url, headers):
+    LOG.debug('requested url: {url}'.format(url=url))
     async with aiohttp.ClientSession() as session:
         async with session.get(url, headers=headers) as resp:
             status_code = resp.status
             return await resp.text(), status_code
+
+
+def ordinal(num):
+    num = int(num)
+    SUFFIXES = {1: 'st', 2: 'nd', 3: 'rd'}
+    if 10 <= num % 100 <= 20:
+        suffix = 'th'
+    else:
+        # the second parameter is a default.
+        suffix = SUFFIXES.get(num % 10, 'th')
+    return str(num) + suffix
+
+
+def convert_time(seconds):
+    m, s = divmod(seconds, 60)
+    h, m = divmod(m, 60)
+    return "%d:%02d:%02d" % (h, m, s)
+
+
+def flatten_list(arg):
+    if isinstance(arg, list) and len(arg) == 1:
+        return arg[0]
+    else:
+        return arg

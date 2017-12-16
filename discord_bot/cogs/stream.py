@@ -2,7 +2,6 @@ import asyncio
 from datetime import datetime
 import logging
 import json
-from json import decoder
 import os
 
 from discord.ext import commands
@@ -13,7 +12,10 @@ from discord_bot import utils
 
 LOG = logging.getLogger('debug')
 
-HEADERS = {"Client-ID": cfg.TWITCH_API_CLIENT_ID, "accept": cfg.TWITCH_API_ACCEPT}
+HEADERS = {
+    "Client-ID": cfg.TWITCH_API_CLIENT_ID,
+    "accept": cfg.TWITCH_API_ACCEPT
+}
 
 
 class Stream(object):
@@ -62,7 +64,8 @@ class StreamManager:
 
         :param loop: event loop
         """
-        await asyncio.gather(self._enrich_data(), loop=loop)
+        if self.streams:
+            await asyncio.gather(self._enrich_data(), loop=loop)
         await asyncio.ensure_future(self._poll_streams(), loop=loop)
 
     def _get_discord_channels_by_stream(self):
@@ -161,7 +164,7 @@ class StreamManager:
         - Delete then create it if it's in a bad format
         - Load the content if there is one
         """
-
+        print(self.filepath)
         etc_dirpath = utils.get_file_path("etc")
         if not os.path.isdir(etc_dirpath):
             LOG.debug("Missing 'etc/' directory, creating one...")
@@ -214,10 +217,11 @@ class StreamManager:
                 status = await self._get_status(*[stream.id for stream in discord_channels_by_stream if stream.id])
                 if status is not None:
                     for stream, discord_channel_ids in discord_channels_by_stream.items():
-                        if stream.id in status:
+                        if int(stream.id) in status:
                             if not stream.is_online:
                                 if not stream.is_notification_already_sent():
-                                    message, embed = self._get_notification(status[stream.id], everyone=stream.everyone)
+                                    message, embed = self._get_notification(status[int(stream.id)],
+                                                                            everyone=stream.everyone)
                                     for channel_id in discord_channel_ids:
                                         channel = self.bot.get_channel(int(channel_id))
                                         await channel.send(message, embed=embed)
@@ -278,7 +282,7 @@ class StreamManager:
         :param username: The stream to notify
         :param everyone: If True, add the tag @everyone to the bot notification
         """
-        channel_id = discord_channel.id
+        channel_id = str(discord_channel.id)
         if not channel_id in self.streams:
             self.streams[channel_id] = {
                 'channel_name': discord_channel.name,
@@ -297,8 +301,8 @@ class StreamManager:
 
         else:
             stream = Stream(username, everyone)
-            stream_id = await self._get_ids(stream.username)
-            stream.id = stream_id
+            stream_ids = await self._get_ids(stream.username)
+            stream.id = stream_ids[stream.username]
             self.streams[channel_id]['twitch_channels'].append(stream)
             LOG.debug("{twitch_username}'s stream is now tracked in '{server_name}:{channel_name}'".format(
                 twitch_username=username,
@@ -339,17 +343,18 @@ class StreamManager:
         :param username: The stream to notify
         """
         discord_channel = ctx.message.channel
-        if discord_channel.id in self.streams.keys():
-            if username in self.streams[discord_channel.id]['twitch_channels']:
-                self.streams[discord_channel.id]['twitch_channels'].remove(username)
+        channel_id = str(discord_channel.id)
+        if discord_channel.id in self.streams:
+            if username in self.streams[channel_id]['twitch_channels']:
+                self.streams[channel_id]['twitch_channels'].remove(username)
                 LOG.debug("{twitch_username}'s stream is no longer tracked in '{server_name}:{channel_name}'".format(
                     twitch_username=username,
                     server_name=discord_channel.guild.name,
                     channel_name=discord_channel.name
                 ))
 
-            if not self.streams[discord_channel.id]['twitch_channels']:
-                del self.streams[discord_channel.id]
+            if not self.streams[channel_id]['twitch_channels']:
+                del self.streams[channel_id]
                 LOG.debug("There is no tracked stream in '{server_name}:{channel_name}' anymore".format(
                     server_name=discord_channel.guild.name,
                     channel_name=discord_channel.name
