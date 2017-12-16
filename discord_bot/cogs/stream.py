@@ -34,48 +34,6 @@ class Stream(object):
     def __str__(self):
         return str(self.username)
 
-    async def get_id(self):
-        """ Get user id """
-        url = "{twitch_api_url}/users?login={twitch_username}".format(twitch_api_url=cfg.TWITCH_API_URL,
-                                                                      twitch_username=self.username)
-        body, status_code = await utils.request(url, headers=HEADERS)
-        try:
-            user = json.loads(body)['users'][0]
-            LOG.debug("API data for {twitch_username}: {data} ({url})"
-                      .format(twitch_username=self.username, data=user, url=url))
-        except decoder.JSONDecodeError:
-            LOG.warning("Cannot retrieve channel information for {twitch_username} ({status_code} bad json format)"
-                        .format(twitch_username=self.username, status_code=status_code))
-        except KeyError:
-            LOG.warning("Cannot retrieve channel data for {twitch_username} ({status_code} empty body)"
-                        .format(twitch_username=self.username, status_code=status_code))
-        except (ValueError, TypeError):
-            LOG.exception("Cannot retrieve channel data for {twitch_username} ({status_code})"
-                          .format(twitch_username=self.username, status_code=status_code))
-        else:
-            self.id = user['_id']
-
-    async def get_status(self):
-        """ Get stream API data """
-        if not self.id:
-            await self.get_id()
-
-        url = "{twitch_api_url}/streams/{id}".format(twitch_api_url=cfg.TWITCH_API_URL, id=self.id)
-        body, status_code = await utils.request(url, headers=HEADERS)
-        try:
-            stream = json.loads(body)
-        except decoder.JSONDecodeError:
-            LOG.warning("Cannot retrieve stream information for {twitch_username} ({status_code} bad json format)"
-                        .format(twitch_username=self.username, status_code=status_code))
-        except KeyError:
-            LOG.warning("Cannot retrieve stream data for {twitch_username} ({status_code} empty body)"
-                        .format(twitch_username=self.username, status_code=status_code))
-        except (ValueError, TypeError):
-            LOG.exception("Cannot retrieve stream data for {twitch_username} ({status_code})"
-                          .format(twitch_username=self.username, status_code=status_code))
-        else:
-            return stream
-
     def update_last_notification_date(self):
         """ Update the date when the last notification has been sent """
         self.last_notification_date = datetime.now()
@@ -97,10 +55,15 @@ class StreamManager:
         self.bot = bot
         self.streams = None
         self.filepath = utils.get_file_path("etc/" + filename + ".json")
+        self._load()
 
-        self.init()
-        loop = asyncio.get_event_loop()
-        asyncio.ensure_future(coro_or_future=self.poll_streams(), loop=loop)
+    async def start(self, loop):
+        """ Start the whole process
+
+        :param loop: event loop
+        """
+        await asyncio.gather(self._enrich_data(), loop=loop)
+        await asyncio.ensure_future(self._poll_streams(), loop=loop)
 
     def _get_discord_channels_by_stream(self):
         """ Build a dictionary with the stream as key and a list of discord channel ids in which the stream is notified
@@ -116,7 +79,45 @@ class StreamManager:
         return channels_by_stream
 
     @staticmethod
-    def _get_embed_notification(status, everyone=False):
+    async def _get_ids(*usernames):
+        """  Retrieve all user ids "
+         
+        :param usernames: usernames whose we want the id
+        """""
+        url = "{twitch_api_url}/users?login={usernames}".format(twitch_api_url=cfg.TWITCH_API_URL,
+                                                                usernames=",".join(usernames))
+        body, status_code = await utils.request(url, headers=HEADERS)
+        try:
+            users = json.loads(body)['users']
+            LOG.debug("API data for {usernames}: {data} ({url})"
+                      .format(usernames=usernames, data=users, url=url))
+        except:
+            LOG.exception("Cannot retrieve channel data for {usernames} ({status_code})"
+                          .format(usernames=usernames, status_code=status_code))
+        else:
+            return {user['name']: user['_id'] for user in users}
+
+    @staticmethod
+    async def _get_status(*twitch_ids):
+        """  Retrieve all stream status
+
+        :param twitch_ids: twitch ids whose we want the status
+        """
+        url = "{twitch_api_url}/streams/?channel={twitch_ids}".format(
+            twitch_api_url=cfg.TWITCH_API_URL,
+            twitch_ids=",".join([str(twitch_id) for twitch_id in twitch_ids])
+        )
+        body, status_code = await utils.request(url, headers=HEADERS)
+        try:
+            streams = json.loads(body)['streams']
+        except:
+            LOG.exception("Cannot retrieve stream data for {twitch_ids}({status_code})".format(twitch_ids=twitch_ids,
+                                                                                               status_code=status_code))
+        else:
+            return {stream['channel']['_id']: stream for stream in streams}
+
+    @staticmethod
+    def _get_notification(status, everyone=False):
         """ Send a message in discord chat to notify that a stream went online
 
         :param status: status object
@@ -153,20 +154,7 @@ class StreamManager:
 
         return message, embed
 
-    async def _save(self):
-        """ Save data in the file """
-        output = {}
-        for channel_id, channel_info in self.streams.items():
-            output[channel_id] = {
-                'channel_name': channel_info['channel_name'],
-                'position': channel_info['position'],
-                'guild_id': channel_info['guild_id'],
-                'guild_name': channel_info['guild_name'],
-                'twitch_channels': [(stream.username, stream.everyone) for stream in channel_info['twitch_channels']]
-            }
-        utils.save_json_file(self.filepath, output)
-
-    def init(self):
+    def _load(self):
         """ Initialize the stream file
 
         - Create it if it does not exist
@@ -194,6 +182,67 @@ class StreamManager:
                 Stream(twitch_username, everyone)
                 for (twitch_username, everyone) in self.streams[channel_id]['twitch_channels']
             ]
+
+    async def _enrich_data(self):
+        """ Set all stream ids """
+        discord_channels_by_stream = self._get_discord_channels_by_stream()
+        id_by_username = await self._get_ids(*[stream.username for stream in discord_channels_by_stream])
+        for stream in self._get_discord_channels_by_stream():
+            stream.id = int(id_by_username[stream.username])
+        LOG.debug("The data has successfully been enriched: {data}".format(data=id_by_username))
+
+    async def _save(self):
+        """ Save data in the file """
+        output = {}
+        for channel_id, channel_info in self.streams.items():
+            output[channel_id] = {
+                'channel_name': channel_info['channel_name'],
+                'position': channel_info['position'],
+                'guild_id': channel_info['guild_id'],
+                'guild_name': channel_info['guild_name'],
+                'twitch_channels': [(stream.username.lower(), stream.everyone)
+                                    for stream in channel_info['twitch_channels']]
+            }
+        utils.save_json_file(self.filepath, output)
+
+    async def _poll_streams(self):
+        """ Poll twitch every X seconds """
+        LOG.debug("The polling has started")
+        while True:
+            discord_channels_by_stream = self._get_discord_channels_by_stream()
+            if discord_channels_by_stream:
+                status = await self._get_status(*[stream.id for stream in discord_channels_by_stream if stream.id])
+                if status is not None:
+                    for stream, discord_channel_ids in discord_channels_by_stream.items():
+                        if stream.id in status:
+                            if not stream.is_online:
+                                if not stream.is_notification_already_sent():
+                                    message, embed = self._get_notification(status[stream.id], everyone=stream.everyone)
+                                    for channel_id in discord_channel_ids:
+                                        channel = self.bot.get_channel(int(channel_id))
+                                        await channel.send(message, embed=embed)
+                                        LOG.debug(
+                                            "Sending notification for {username}'s stream in "
+                                            "'{guild_name}:{channel_name}'" .format(username=stream.username,
+                                                                                    guild_name=channel.guild.name,
+                                                                                    channel_name=channel.name))
+                                    stream.update_last_notification_date()
+                                    stream.is_online = True
+                                else:
+                                    LOG.warning("A notification has already been sent {username} within {max_rate}"
+                                                .format(username=stream.username, max_rate=cfg.MAX_NOTIFICATION_RATE))
+                        else:
+                            if stream.is_online:
+                                LOG.debug("{username} just went offline".format(username=stream.username))
+                                stream.is_online = False
+                else:
+                    LOG.warning("Cannot retrieve status for {usernames}, the polling iteration has been skipped."
+                                .format(usernames=[stream.username for stream in discord_channels_by_stream]))
+                await asyncio.sleep(3)
+            else:
+                await asyncio.sleep(10)
+
+    # COMMANDS
 
     @commands.group(pass_context=True)
     async def stream(self, ctx):
@@ -247,7 +296,10 @@ class StreamManager:
             ))
 
         else:
-            self.streams[channel_id]['twitch_channels'].append(Stream(username, everyone))
+            stream = Stream(username, everyone)
+            stream_id = await self._get_ids(stream.username)
+            stream.id = stream_id
+            self.streams[channel_id]['twitch_channels'].append(stream)
             LOG.debug("{twitch_username}'s stream is now tracked in '{server_name}:{channel_name}'".format(
                 twitch_username=username,
                 server_name=discord_channel.guild.name,
@@ -262,7 +314,7 @@ class StreamManager:
         :param ctx: command context
         :param username: The stream to notify
         """
-        await self._add_stream(ctx.message.channel, username)
+        await self._add_stream(ctx.message.channel, username.lower())
         await self.bot.say(ctx, "{username} is now tracked in '{server_name}:{channel_name}'".format(
             username=username, server_name=ctx.message.channel.guild.name, channel_name=ctx.message.channel.name
         ))
@@ -274,7 +326,7 @@ class StreamManager:
         :param ctx: command context
         :param username: The stream to notify
         """
-        await self._add_stream(ctx.message.channel, username, everyone=True)
+        await self._add_stream(ctx.message.channel, username.lower(), everyone=True)
         await self.bot.say(ctx, "{username} is now tracked in '{server_name}:{channel_name}'".format(
             username=username, server_name=ctx.message.channel.guild.name, channel_name=ctx.message.channel.name
         ))
@@ -312,6 +364,7 @@ class StreamManager:
             username=username, server_name=discord_channel.guild.name, channel_name=discord_channel.name
         ))
 
+    # EVENTS
     async def on_guild_channel_delete(self, channel):
         LOG.debug("The channel '{guild_name:channel_name}' has been deleted".format(guild_name=channel.guild.name,
                                                                                     channel_name=channel.name))
@@ -324,46 +377,10 @@ class StreamManager:
             LOG.warning("channel '{guild_name:channel_name}' not found".format(guild_name=channel.guild.name,
                                                                                channel_name=channel.name))
 
-    async def poll_streams(self):
-        """ Poll streams status every X seconds
-
-        If a stream went online and no notification has been sent for a while, the bot notifies in the related discord
-        channel.
-        """
-        while True:
-            channels_by_stream = self._get_discord_channels_by_stream()
-            if not channels_by_stream:
-                await asyncio.sleep(10)
-            for stream, discord_channel_ids in channels_by_stream.items():
-                api_result = await stream.get_status()
-                if api_result is not None:
-                    status = api_result.get('stream')
-                    if status:
-                        if not stream.is_online:
-                            if not stream.is_notification_already_sent():
-                                message, embed = self._get_embed_notification(status, everyone=stream.everyone)
-                                for channel_id in discord_channel_ids:
-                                    channel = self.bot.get_channel(int(channel_id))
-                                    await channel.send(message, embed=embed)
-                                    LOG.debug(
-                                        "Sending notification for {username}'s stream in '{guild_name}:{channel_name}'"
-                                        .format(username=stream.username, guild_name=channel.guild.name,
-                                                channel_name=channel.name)
-                                    )
-                                stream.update_last_notification_date()
-                                stream.is_online = True
-                            else:
-                                LOG.debug("A notification has already been sent {username} within {max_rate}"
-                                          .format(username=stream.username, max_rate=cfg.MAX_NOTIFICATION_RATE))
-                    else:
-                        if stream.is_online:
-                            LOG.debug("{username} just went offline".format(username=stream.username))
-                            stream.is_online = False
-                else:
-                    LOG.debug("No status for {username}, skipping iteration".format(username=stream.username))
-
-                await asyncio.sleep(1)
-
 
 def setup(bot):
-    bot.add_cog(StreamManager(bot))
+    stream_manager = StreamManager(bot)
+    bot.add_cog(stream_manager)
+
+    loop = asyncio.get_event_loop()
+    asyncio.ensure_future(stream_manager.start(loop), loop=loop)
