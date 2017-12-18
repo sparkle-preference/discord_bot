@@ -10,7 +10,7 @@ from discord import colour, embeds
 import cfg
 from discord_bot import utils
 
-LOG = logging.getLogger('debug')
+LOG = logging.getLogger(__name__)
 
 HEADERS = {
     "Client-ID": cfg.TWITCH_API_CLIENT_ID,
@@ -164,7 +164,6 @@ class StreamManager:
         - Delete then create it if it's in a bad format
         - Load the content if there is one
         """
-        print(self.filepath)
         etc_dirpath = utils.get_file_path("etc")
         if not os.path.isdir(etc_dirpath):
             LOG.debug("Missing 'etc/' directory, creating one...")
@@ -344,7 +343,7 @@ class StreamManager:
         """
         discord_channel = ctx.message.channel
         channel_id = str(discord_channel.id)
-        if discord_channel.id in self.streams:
+        if channel_id in self.streams:
             if username in self.streams[channel_id]['twitch_channels']:
                 self.streams[channel_id]['twitch_channels'].remove(username)
                 LOG.debug("{twitch_username}'s stream is no longer tracked in '{server_name}:{channel_name}'".format(

@@ -18,11 +18,11 @@ DISCORD_FILE_HANDLER.setFormatter(LOG_PATTERN)
 DISCORD_LOGGER.addHandler(DISCORD_FILE_HANDLER)
 
 # chat logger
-CHAT_LOGGER = logging.getLogger("chat")
-CHAT_LOGGER.setLevel(logging.DEBUG)
-CHAT_FILE_HANDLER = RotatingFileHandler(LOG_DIR + "/chat.log", "a", 1000000, 1)
-CHAT_FILE_HANDLER.setFormatter(LOG_PATTERN)
-CHAT_LOGGER.addHandler(CHAT_FILE_HANDLER)
+UTILS_LOGGER = logging.getLogger("utils")
+UTILS_LOGGER.setLevel(logging.DEBUG)
+UTILS_FILE_HANDLER = RotatingFileHandler(LOG_DIR + "/utils.log", "a", 1000000, 1)
+UTILS_FILE_HANDLER.setFormatter(LOG_PATTERN)
+UTILS_LOGGER.addHandler(UTILS_FILE_HANDLER)
 
 # debug logger
 DEBUG_LOGGER = logging.getLogger("debug")
@@ -35,5 +35,5 @@ DEBUG_LOGGER.addHandler(DEBUG_FILE_HANDLER)
 STEAM_HANDLER = logging.StreamHandler()
 STEAM_HANDLER.setFormatter(LOG_PATTERN)
 STEAM_HANDLER.setLevel(logging.DEBUG)
-# chat_logger.addHandler(steam_handler)
+UTILS_LOGGER.addHandler(STEAM_HANDLER)
 DEBUG_LOGGER.addHandler(STEAM_HANDLER)

@@ -1,14 +1,14 @@
-import asyncio
+import abc
 import collections
 import json
 import logging
-import re
 
 from discord import colour, embeds
 from discord.ext import commands
 
 import cfg
 from discord_bot import utils
+from discord_bot.utils import bold, underline
 
 
 LOG = logging.getLogger('debug')
@@ -19,286 +19,177 @@ HEADERS = {
 }
 
 
-class Speedrun:
+class SpeedrunData:
 
-    def __init__(self, bot):
-        type(self).__name__ = "Speedrun.com commands"
-        self.bot = bot
-        self.games = []
-        self.categories = []
-        self.user_links = {}
+    __metaclass__ = abc.ABCMeta
 
-    @staticmethod
-    def _parse_pb_data(pb):
-        """ Parse API run data
-
-        :param pb: API run data
-        :return: reduced dict of API run data
-        """
-        links = {link['rel']: link['uri'] for link in pb['run']['links']}
-
-        return {
-            'place': utils.ordinal(pb['place']),
-            'game_url': links['game'],
-            'category_url': links['category'],
-            'time': utils.convert_time(pb['run']['times']['realtime_t']),
-            'video_url': pb['run']['videos']['links'][0]['uri'],
-        }
+    GAMES = {}
+    CATEGORIES = {}
+    RESOURCE_NAME = "unknown"
 
     @staticmethod
-    def _parse_game_data(game):
-        """ Parse API game data
-
-        :param game: API game data
-        :return: reduced dict of API game data
-        """
-        return {
-            'id': game['id'],
-            'name': game['names']['international'],
-            'abbreviation': game['abbreviation'],
-            'links': {link['rel']: link['uri'] for link in game['links']}
-        }
+    @abc.abstractmethod
+    def _get_game_id(elem):
+        pass
 
     @staticmethod
-    def _parse_category_data(category):
-        """ Parse API category data
-
-        :param category: API category data
-        :return: reduced dict of API category data
-        """
-        return {
-            'id': category['id'],
-            'name': category['name'],
-            'links': {link['rel']: link['uri'] for link in category['links']}
-        }
+    @abc.abstractmethod
+    def _get_category_id(elem):
+        pass
 
     @staticmethod
-    def _parse_record_data(record):
-        """ Parse API record data
+    @abc.abstractmethod
+    def get_url(*args):
+        pass
 
-        :param record: API record data
-        :return: reduced dict of API record data
-        """
-        return {
-            'time': utils.convert_time(record['runs'][0]['run']['times']['realtime_t']),
-            'video_url': record['runs'][0]['run']['videos']['links'][0]['uri']
-        }
+    @classmethod
+    @abc.abstractmethod
+    async def parse(cls, elem):
+        pass
 
     @staticmethod
-    def _get_summary_embed(summary):
+    def get_embed(summary):
         """ Build an embed
-
         :param summary: summary data to display
         :return: embed
         """
+        FIELDS = ['place', 'time', 'url']
+
         embed = embeds.Embed()
         embed.colour = colour.Color.dark_gold()
 
         for game, categories in summary.items():
             value = ""
             for category, pb in categories.items():
-                value += u"__**{category_name}**__:\n".format(category_name=category)
-                for field_name, field_value in pb.items():
-                    value += u"\t **{field_name}**: {field_value}\n".format(field_name=field_name,
-                                                                            field_value=field_value)
+                value += u"{category_name}:\n".format(category_name=underline(bold(category)))
+                for field_name in set(pb.keys()) & set(FIELDS):
+                    field_value = pb[field_name]
+                    value += u"\t {field_name}: {field_value}\n".format(field_name=bold(field_name),
+                                                                        field_value=field_value)
             embed.add_field(name=game, value=value)
 
         return embed
 
-    async def _get_user_links(self, name):
-        """ Get user links (profile, personal bests, ..)
-
-        :param name: username
-        :return: user links
-        """
-        try:
-            if name in self.user_links:
-                return self.user_links[name]
-            url = "{sr_api_url}/users?name={name}".format(sr_api_url=cfg.SR_API_URL, name=name)
-            body, status_code = await utils.request(url, headers=HEADERS)
-
-            links = json.loads(body)['data'][0]['links']
-        except:
-            LOG.exception("Cannot retrieve data for '{name}' ({status_code})".format(name=name, status_code=status_code))
+    @classmethod
+    async def get_data(cls, url):
+        body, status_code = await utils.request(url, headers=HEADERS)
+        if status_code == 200:
+            return json.loads(body)['data']
         else:
-            user_links = {link['rel']: link['uri'] for link in links}
-            self.user_links[name] = user_links
-            return user_links
+            LOG.error("Cannot retrieve %ss: %s (http status %s)", cls.RESOURCE_NAME, status_code)
 
-    async def _get_game(self, arg):
-        """ Retrieve game data from abbreviation or url
+    @classmethod
+    async def _get_game_name(cls, game_id):
+        if game_id not in cls.GAMES:
+            LOG.debug("Retrieving game data for the game id '%s'", game_id)
+            url = "{sr_api_url}/games/{game_id}".format(sr_api_url=cfg.SR_API_URL, game_id=game_id)
+            game = await cls.get_data(url)
+            LOG.debug("Game data for the game id '%s': %s", game_id, game)
+            cls.GAMES[game_id] = game['names']['international']
 
-        - Request game data only if it is not already stored
-        :param arg: url or abbreviation
-        :return: reduced dict of API record data
-        """
-        for game in self.games:
-            if game['links']['self'] == arg or game['abbreviation'] == arg:
-                return game
-
-        if re.match("http[s]*://.*", arg):
-            url = arg
-        else:
-            url = "{sr_api_url}/games?abbreviation={abbreviation}" \
-                .format(sr_api_url=cfg.SR_API_URL, abbreviation=arg)
-
-        if url:
-            game_body, status_code = await utils.request(url, headers=HEADERS)
-            try:
-                game = utils.flatten_list(json.loads(game_body)["data"])
-            except:
-                LOG.exception("Cannot retrieve game name: {url} ({status_code})"
-                              .format(url=url, status_code=status_code))
-            else:
-                game = self._parse_game_data(game)
-                if game not in self.games:
-                    self.games.append(game)
-                return game
-
-    async def _get_game_records(self, arg):
-        """ Retrieve records data from game abbreviation or url
-
-        Request records data only if it is not already stored
-        :param arg: url or abbreviation
-        :return: reduced dict of API record data
-        """
-        try:
-            stored_game = await self._get_game(arg)
-            await self._get_categories(stored_game['links']['categories'])
-
-            url = "{sr_api_url}/games/{game_id}/records".format(sr_api_url=cfg.SR_API_URL, game_id=stored_game['id'])
-            records_body, status_code = await utils.request(url, headers=HEADERS)
-
-            records = json.loads(records_body)["data"]
-        except:
-            LOG.exception("Cannot retrieve records for game: {game_id} ({status_code})"
-                          .format(game_id=stored_game['name'], status_code=status_code))
-        else:
-            records_summary = collections.defaultdict(dict)
-            for category in records:
-                stored_category = await self._get_category(category['links'][1]['uri'])
-                record = self._parse_record_data(category)
-                records_summary[stored_game['name']][stored_category['name']] = record
-            return records_summary
-
-    async def _get_category(self, category_url):
-        """ Retrieve category data from url
-
-        Request category data only if it is not already stored
-        :param category_url: category url
-        :return: reduced dict of API category data
-        """
-        try:
-            for category in self.categories:
-                if category['links']['self'] == category_url:
-                    return category
-
-            category_body, status_code = await utils.request(category_url, headers=HEADERS)
-
-            category = json.loads(category_body)["data"]
-        except:
-            LOG.exception("Cannot retrieve category name: {category_url} ({status_code})"
-                          .format(category_url=category_url, status_code=status_code))
-        else:
-            category = self._parse_category_data(category)
-            if not category in self.categories:
-                self.categories.append(category)
-            return category
-
-    async def _get_categories(self, arg):
-        """ Retrieve categories data from url and stores it
-
-        Request categories data
-        :param arg: categories url (<game_id>/categories)
-        """
-        try:
-            if re.match("http[s]*://.*", arg):
-                url = arg
-            else:
-                url = "{sr_api_url}/games/{game_id}/categories".format(sr_api_url=cfg.SR_API_URL, game_id=arg)
-
-            category_body, status_code = await utils.request(url, headers=HEADERS)
-
-            categories = json.loads(category_body)["data"]
-        except:
-            LOG.exception("Cannot retrieve category name: {arg} ({status_code})"
-                          .format(arg=arg, status_code=status_code))
-        else:
+            LOG.debug("Retrieving categories data for the game id '%s'", game_id)
+            url = "{sr_api_url}/games/{game_id}/categories".format(sr_api_url=cfg.SR_API_URL, game_id=game_id)
+            categories = await cls.get_data(url)
+            LOG.debug("Category data for the game id '%s': %s", game_id, categories)
             for category in categories:
-                category = self._parse_category_data(category)
-                if category not in self.categories:
-                    self.categories.append(category)
+                cls.CATEGORIES[category['id']] = category['name']
 
-    async def _get_profile(self, name, abbreviation=None):
-        """ Retrieve user's pb data
+        return cls.GAMES[game_id]
 
-        :param name: username
-        :param abbreviation: game abbreviation
-        :return: reduced dict of user API data
-        """
-        try:
-            user_links = await self._get_user_links(name)
-            url = user_links['personal-bests']
+    @classmethod
+    async def _get_category_name(cls, category_id):
+        if category_id not in cls.CATEGORIES:
+            LOG.warning("Retrieving category data for the category id '%s'", category_id)
+            url = "{sr_api_url}/categories/{category_id}".format(sr_api_url=cfg.SR_API_URL, category_id=category_id)
+            category = await cls.get_data(url)
+            LOG.warning("Category data for the category id '%s': %s", category_id, category)
+            cls.CATEGORIES[category_id] = category['names']['international']
+        return cls.CATEGORIES[category_id]
 
-            if abbreviation:
-                url += "?game=" + abbreviation
 
-            pb_body, status_code = await utils.request(url, headers=HEADERS)
-            pbs = json.loads(pb_body)['data']
-            game_ids = {pb['run']['game'] for pb in pbs}
+class WorldRecord(SpeedrunData):
+    RESOURCE_NAME = "world record"
 
-            for game_id in game_ids:
-                await self._get_categories(game_id)
-        except:
-            LOG.exception("Cannot retrieve profile for: {name} ({status_code})"
-                          .format(name=name, status_code=status_code))
-        else:
-            profile = collections.defaultdict(dict)
+    @classmethod
+    async def parse(cls, elem):
+        game_name = await cls._get_game_name(cls._get_game_id(elem))
+        category_name = await cls._get_category_name(cls._get_category_id(elem))
+        return {
+            'game_name': game_name,
+            'category_name': category_name,
+            'time': utils.convert_time(elem['runs'][0]['run']['times']['realtime_t']),
+            'url': elem['runs'][0]['run']['videos']['links'][0]['uri']
+        }
 
-            for pb in pbs:
-                pb = self._parse_pb_data(pb)
+    @staticmethod
+    def _get_game_id(elem):
+        return elem['runs'][0]['run']['game']
 
-                game = await self._get_game(pb['game_url'])
-                category = await self._get_category(pb['category_url'])
-                profile[game['name']][category['name']] = {
-                    'place': pb['place'],
-                    'time': pb['time'],
-                    'video_url': pb['video_url']
-                }
-            return profile
+    @staticmethod
+    def _get_category_id(elem):
+        return elem['runs'][0]['run']['category']
 
-    # COMMANDS
+    @staticmethod
+    def get_url(game):
+        return "{sr_api_url}/games/{game}/records?top=1".format(sr_api_url=cfg.SR_API_URL, game=game)
 
-    @commands.command(pass_context=True, aliases=['sr'])
-    async def sr(self, ctx, name, abbrevation=None):
-        """ Display an user speedrun.com summary """
-        name = name.lower()
-        pending_message = await ctx.message.channel.send("Retrieving data for {name}...".format(name=name))
-        try:
-            summary = await self._get_profile(name, abbreviation=abbrevation)
-            embed = self._get_summary_embed(summary)
-        except:
-            await pending_message.delete()
-            LOG.exception("Cannot retrieve profile for {name} with game={game}".format(name=name, game=abbrevation))
-        else:
-            await pending_message.delete()
-            if summary:
-                await ctx.message.channel.send("Summary for {name}".format(name=name), embed=embed)
 
-    @commands.command(pass_context=True, aliases=['wr'])
-    async def wr(self, ctx, abbreviation):
-        """Display a game world records """
-        pending_message = await ctx.message.channel.send("Retrieving data for {game}...".format(game=abbreviation))
-        try:
-            summary = await self._get_game_records(abbreviation)
-            embed = self._get_summary_embed(summary)
-        except:
-            await pending_message.delete()
-            LOG.exception("Cannot retrieve records for game={game}".format(game=abbreviation))
-        else:
-            await pending_message.delete()
-            if summary:
-                await ctx.message.channel.send("Summary for {game}".format(game=abbreviation), embed=embed)
+class PersonalBest(SpeedrunData):
+    RESOURCE_NAME = "personal best"
+
+    @classmethod
+    async def parse(cls, elem):
+        game_name = await cls._get_game_name(cls._get_game_id(elem))
+        category_name = await cls._get_category_name(cls._get_category_id(elem))
+        return {
+            'place': utils.ordinal(elem['place']),
+            'game_name': game_name,
+            'category_name': category_name,
+            'time': utils.convert_time(elem['run']['times']['realtime_t']),
+            'url': elem['run']['videos']['links'][0]['uri']
+        }
+
+    @staticmethod
+    def _get_game_id(elem):
+        return elem['run']['game']
+
+    @staticmethod
+    def _get_category_id(elem):
+        return elem['run']['category']
+
+    @staticmethod
+    def get_url(username, game):
+        return "{sr_api_url}/users/{username}/personal-bests?game={game}"\
+                .format(sr_api_url=cfg.SR_API_URL, username=username, game=game or "")
+
+
+class Speedrun:
+
+    def __init__(self, bot):
+        self.bot = bot
+
+    @commands.command()
+    async def sr(self, ctx, username, game=None):
+        url = PersonalBest.get_url(username, game)
+        personal_bests = await PersonalBest.get_data(url)
+        summary = collections.defaultdict(dict)
+        for personal_best in personal_bests:
+            summary_elem = await PersonalBest.parse(personal_best)
+            summary[summary_elem['game_name']][summary_elem['category_name']] = summary_elem
+        embed = PersonalBest.get_embed(summary)
+        await ctx.message.channel.send(embed=embed)
+
+    @commands.command()
+    async def wr(self, ctx, game):
+        url = WorldRecord.get_url(game)
+        records = await WorldRecord.get_data(url)
+        summary = collections.defaultdict(dict)
+        for record in records:
+            if record['runs']:
+                summary_elem = await WorldRecord.parse(record)
+                summary[summary_elem['game_name']][summary_elem['category_name']] = summary_elem
+        embed = WorldRecord.get_embed(summary)
+        await ctx.message.channel.send(embed=embed)
 
 
 def setup(bot):

@@ -1,11 +1,12 @@
 import collections
+from datetime import datetime
 import json
 import logging
 import os
 
 import aiohttp
 
-LOG = logging.getLogger('debug')
+LOG = logging.getLogger('utils')
 
 
 def get_project_dir():
@@ -55,11 +56,14 @@ def load_json_file(filename):
 
 
 async def request(url, headers):
-    LOG.debug('requested url: {url}'.format(url=url))
+    begin = datetime.now()
     async with aiohttp.ClientSession() as session:
         async with session.get(url, headers=headers) as resp:
             status_code = resp.status
-            return await resp.text(), status_code
+            response = await resp.text()
+            response_time = (datetime.now() - begin).microseconds // 1000
+            LOG.debug('requested url: {url} ({response_time}ms)'.format(url=url, response_time=response_time))
+            return response, status_code
 
 
 def ordinal(num):
@@ -79,8 +83,9 @@ def convert_time(seconds):
     return "%d:%02d:%02d" % (h, m, s)
 
 
-def flatten_list(arg):
-    if isinstance(arg, list) and len(arg) == 1:
-        return arg[0]
-    else:
-        return arg
+def underline(message):
+    return "__" + str(message) + "__"
+
+
+def bold(message):
+    return "**" + str(message) + "**"

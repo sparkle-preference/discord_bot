@@ -7,7 +7,7 @@ import cfg
 from discord_bot import cogs
 from discord_bot import utils
 
-LOG = logging.getLogger('debug')
+LOG = logging.getLogger(__name__)
 
 
 class Bot(commands.Bot):
