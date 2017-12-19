@@ -10,7 +10,7 @@ from discord import colour, embeds
 import cfg
 from discord_bot import utils
 
-LOG = logging.getLogger(__name__)
+LOG = logging.getLogger('debug')
 
 HEADERS = {
     "Client-ID": cfg.TWITCH_API_CLIENT_ID,

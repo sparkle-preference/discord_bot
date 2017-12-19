@@ -3,11 +3,10 @@ import pkgutil
 
 from discord.ext import commands
 
-import cfg
 from discord_bot import cogs
 from discord_bot import utils
 
-LOG = logging.getLogger(__name__)
+LOG = logging.getLogger('debug')
 
 
 class Bot(commands.Bot):

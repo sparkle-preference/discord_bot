@@ -17,13 +17,6 @@ DISCORD_FILE_HANDLER = RotatingFileHandler(LOG_DIR + "/discord.log", "a", 100000
 DISCORD_FILE_HANDLER.setFormatter(LOG_PATTERN)
 DISCORD_LOGGER.addHandler(DISCORD_FILE_HANDLER)
 
-# chat logger
-UTILS_LOGGER = logging.getLogger("utils")
-UTILS_LOGGER.setLevel(logging.DEBUG)
-UTILS_FILE_HANDLER = RotatingFileHandler(LOG_DIR + "/utils.log", "a", 1000000, 1)
-UTILS_FILE_HANDLER.setFormatter(LOG_PATTERN)
-UTILS_LOGGER.addHandler(UTILS_FILE_HANDLER)
-
 # debug logger
 DEBUG_LOGGER = logging.getLogger("debug")
 DEBUG_LOGGER.setLevel(logging.DEBUG)
@@ -35,5 +28,4 @@ DEBUG_LOGGER.addHandler(DEBUG_FILE_HANDLER)
 STEAM_HANDLER = logging.StreamHandler()
 STEAM_HANDLER.setFormatter(LOG_PATTERN)
 STEAM_HANDLER.setLevel(logging.DEBUG)
-UTILS_LOGGER.addHandler(STEAM_HANDLER)
 DEBUG_LOGGER.addHandler(STEAM_HANDLER)

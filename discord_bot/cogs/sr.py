@@ -1,7 +1,9 @@
 import abc
+import asyncio
 import collections
 import json
 import logging
+import time
 
 from discord import colour, embeds
 from discord.ext import commands
@@ -72,38 +74,29 @@ class SpeedrunData:
 
     @classmethod
     async def get_data(cls, url):
+        begin = time.time()
         body, status_code = await utils.request(url, headers=HEADERS)
         if status_code == 200:
-            return json.loads(body)['data']
+            data = json.loads(body)['data']
+            LOG.debug("Request to {} successful ({:02.3f}s)".format(url, time.time() - begin))
+            return data
         else:
             LOG.error("Cannot retrieve %ss: %s (http status %s)", cls.RESOURCE_NAME, status_code)
 
     @classmethod
     async def _get_game_name(cls, game_id):
         if game_id not in cls.GAMES:
-            LOG.debug("Retrieving game data for the game id '%s'", game_id)
             url = "{sr_api_url}/games/{game_id}".format(sr_api_url=cfg.SR_API_URL, game_id=game_id)
             game = await cls.get_data(url)
-            LOG.debug("Game data for the game id '%s': %s", game_id, game)
             cls.GAMES[game_id] = game['names']['international']
-
-            LOG.debug("Retrieving categories data for the game id '%s'", game_id)
-            url = "{sr_api_url}/games/{game_id}/categories".format(sr_api_url=cfg.SR_API_URL, game_id=game_id)
-            categories = await cls.get_data(url)
-            LOG.debug("Category data for the game id '%s': %s", game_id, categories)
-            for category in categories:
-                cls.CATEGORIES[category['id']] = category['name']
-
         return cls.GAMES[game_id]
 
     @classmethod
     async def _get_category_name(cls, category_id):
         if category_id not in cls.CATEGORIES:
-            LOG.warning("Retrieving category data for the category id '%s'", category_id)
             url = "{sr_api_url}/categories/{category_id}".format(sr_api_url=cfg.SR_API_URL, category_id=category_id)
             category = await cls.get_data(url)
-            LOG.warning("Category data for the category id '%s': %s", category_id, category)
-            cls.CATEGORIES[category_id] = category['names']['international']
+            cls.CATEGORIES[category_id] = category['name']
         return cls.CATEGORIES[category_id]
 
 
@@ -112,11 +105,14 @@ class WorldRecord(SpeedrunData):
 
     @classmethod
     async def parse(cls, elem):
-        game_name = await cls._get_game_name(cls._get_game_id(elem))
-        category_name = await cls._get_category_name(cls._get_category_id(elem))
+        tasks = [
+            cls._get_game_name(cls._get_game_id(elem)),
+            cls._get_category_name(cls._get_category_id(elem))
+        ]
+        game_name, category_name = await asyncio.gather(*tasks)
         return {
-            'game_name': game_name,
-            'category_name': category_name,
+            'game_name': str(game_name),
+            'category_name': str(category_name),
             'time': utils.convert_time(elem['runs'][0]['run']['times']['realtime_t']),
             'url': elem['runs'][0]['run']['videos']['links'][0]['uri']
         }
@@ -139,8 +135,11 @@ class PersonalBest(SpeedrunData):
 
     @classmethod
     async def parse(cls, elem):
-        game_name = await cls._get_game_name(cls._get_game_id(elem))
-        category_name = await cls._get_category_name(cls._get_category_id(elem))
+        tasks = [
+            cls._get_game_name(cls._get_game_id(elem)),
+            cls._get_category_name(cls._get_category_id(elem))
+        ]
+        game_name, category_name = await asyncio.gather(*tasks)
         return {
             'place': utils.ordinal(elem['place']),
             'game_name': game_name,
@@ -173,23 +172,22 @@ class Speedrun:
         url = PersonalBest.get_url(username, game)
         personal_bests = await PersonalBest.get_data(url)
         summary = collections.defaultdict(dict)
-        for personal_best in personal_bests:
-            summary_elem = await PersonalBest.parse(personal_best)
+        summary_elems = await asyncio.gather(*[PersonalBest.parse(pb) for pb in personal_bests])
+        for summary_elem in summary_elems:
             summary[summary_elem['game_name']][summary_elem['category_name']] = summary_elem
         embed = PersonalBest.get_embed(summary)
-        await ctx.message.channel.send(embed=embed)
+        await ctx.message.channel.send("Summary for {username}".format(username=username), embed=embed)
 
     @commands.command()
     async def wr(self, ctx, game):
         url = WorldRecord.get_url(game)
         records = await WorldRecord.get_data(url)
         summary = collections.defaultdict(dict)
-        for record in records:
-            if record['runs']:
-                summary_elem = await WorldRecord.parse(record)
-                summary[summary_elem['game_name']][summary_elem['category_name']] = summary_elem
+        summary_elems = await asyncio.gather(*[WorldRecord.parse(record) for record in records if record['runs']])
+        for summary_elem in summary_elems:
+            summary[summary_elem['game_name']][summary_elem['category_name']] = summary_elem
         embed = WorldRecord.get_embed(summary)
-        await ctx.message.channel.send(embed=embed)
+        await ctx.message.channel.send("Worlds records for {game}".format(game=game), embed=embed)
 
 
 def setup(bot):
