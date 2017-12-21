@@ -25,7 +25,7 @@ class Stream(object):
         self.id = None
         self.is_online = False
         self.everyone = everyone
-        self.last_notification_date = None
+        self.last_offline_date = None
 
     def __eq__(self, other):
         return self.username == other
@@ -36,18 +36,18 @@ class Stream(object):
     def __str__(self):
         return str(self.username)
 
-    def update_last_notification_date(self):
-        """ Update the date when the last notification has been sent """
-        self.last_notification_date = datetime.now()
+    def update_last_offline_date(self):
+        """ Update the last offline date """
+        self.last_offline_date = datetime.now()
 
-    def is_notification_already_sent(self):
-        """ Check if a notification has not already been sent within X seconds """
-        if not self.last_notification_date:
+    def goes_offline(self):
+        """ Check if the user has been offline for a long time """
+        if not self.last_offline_date:
             return False
         else:
             now = datetime.now()
-            delta = now - self.last_notification_date
-            return delta.seconds < cfg.MAX_NOTIFICATION_RATE
+            offline_duration = now - self.last_offline_date
+            return offline_duration.seconds > cfg.MIN_OFFLINE_DURATION
 
 
 class StreamManager:
@@ -217,31 +217,30 @@ class StreamManager:
                 if status is not None:
                     for stream, discord_channel_ids in discord_channels_by_stream.items():
                         if int(stream.id) in status:
+                            stream.last_offline_date = None
                             if not stream.is_online:
-                                if not stream.is_notification_already_sent():
-                                    message, embed = self._get_notification(status[int(stream.id)],
-                                                                            everyone=stream.everyone)
-                                    for channel_id in discord_channel_ids:
-                                        channel = self.bot.get_channel(int(channel_id))
-                                        await channel.send(message, embed=embed)
-                                        LOG.debug(
-                                            "Sending notification for {username}'s stream in "
-                                            "'{guild_name}:{channel_name}'" .format(username=stream.username,
-                                                                                    guild_name=channel.guild.name,
-                                                                                    channel_name=channel.name))
-                                    stream.update_last_notification_date()
-                                    stream.is_online = True
-                                else:
-                                    LOG.warning("A notification has already been sent {username} within {max_rate}"
-                                                .format(username=stream.username, max_rate=cfg.MAX_NOTIFICATION_RATE))
+                                message, embed = self._get_notification(status[int(stream.id)],
+                                                                        everyone=stream.everyone)
+                                for channel_id in discord_channel_ids:
+                                    channel = self.bot.get_channel(int(channel_id))
+                                    await channel.send(message, embed=embed)
+                                    LOG.debug(
+                                        "Sending notification for {username}'s stream in "
+                                        "'{guild_name}:{channel_name}'" .format(username=stream.username,
+                                                                                guild_name=channel.guild.name,
+                                                                                channel_name=channel.name))
+                                stream.is_online = True
                         else:
                             if stream.is_online:
-                                LOG.debug("{username} just went offline".format(username=stream.username))
-                                stream.is_online = False
+                                if not stream.last_offline_date:
+                                    stream.update_last_offline_date()
+                                if stream.goes_offline():
+                                    stream.is_online = False
+                                    LOG.debug("{username} just went offline".format(username=stream.username))
                 else:
                     LOG.warning("Cannot retrieve status for {usernames}, the polling iteration has been skipped."
                                 .format(usernames=[stream.username for stream in discord_channels_by_stream]))
-                await asyncio.sleep(3)
+                await asyncio.sleep(10)
             else:
                 await asyncio.sleep(10)
 
