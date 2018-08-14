@@ -40,8 +40,8 @@ class Bot(commands.Bot):
             message += f"{self.command_prefix}{ctx.command.signature}"
             await self.send(ctx.channel, message, code_block=True)
         elif type(error) not in self.handled_exceptions:
-            LOG.error(f"Exception '{type(error).__name__}' raised in command '{ctx.command}':")
-            traceback.print_exception(type(error), error, error.__traceback__, file=sys.stderr)
+            LOG.exception(f"Exception '{type(error).__name__}' raised in command '{ctx.command}'",
+                          exc_info=(type(error), error, error.__traceback__))
 
     async def on_raw_reaction_add(self, payload):
         channel = self.get_channel(payload.channel_id)

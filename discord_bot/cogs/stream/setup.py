@@ -123,7 +123,7 @@ class StreamManager:
 
                         # Update streamer's name in the database if it has changed
                         if not stream.name == status[stream.id]['channel']['name']:
-                            stream.update(name=status[stream.id]['channel']['name']).apply()
+                            await stream.update(name=status[stream.id]['channel']['name']).apply()
 
                         # If the stream was not online during the previous iteration, the stream just went online
                         if not stream.is_online:
